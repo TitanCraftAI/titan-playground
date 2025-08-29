@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>TitanCraft AI – Playground</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0f14; --panel:#121820; --border:#1f2a36; --text:#e6edf3; --muted:#9fb0c3; --accent:#3da9fc; --ok:#16a34a; --err:#ef4444; }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue","Noto Sans",sans-serif}
+    .wrap{max-width:960px;margin:0 auto;padding:24px}
+    .topbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+    .topbar input[type="text"]{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;min-width:280px}
+    .btn{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer}
+    .btn:hover{border-color:var(--accent)}
+    .btn.primary{background:var(--accent);border-color:var(--accent);color:#001018}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted)}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .col{flex:1}
+    .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+    .chat{height:56vh;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+    .msg{max-width:80%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);white-space:pre-wrap}
+    .msg.user{align-self:flex-end;background:#0f1a24}
+    .msg.bot{align-self:flex-start;background:#0e141b}
+    .meta{font-size:12px;color:var(--muted)}
+    .inputbar{display:flex;gap:8px;margin-top:10px}
+    textarea{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px;min-height:56px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; white-space:pre-wrap}
+    .ok{color:var(--ok)} .err{color:var(--err)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <span class="badge">TitanCraft Playground</span>
+      <span class="badge" id="statusBadge">Base: https://api.titancraft.io</span>
+      <button class="btn" id="btnHealth">Health</button>
+      <button class="btn" id="btnVersion">Version</button>
+      <button class="btn" id="btnClear">Clear</button>
+    </div>
+
+    <div class="panel">
+      <div class="row" style="gap:10px;align-items:flex-end;">
+        <div class="col">
+          <label class="meta">Base URL</label>
+          <input id="baseUrl" type="text" value="https://api.titancraft.io" />
+        </div>
+        <div style="width:260px">
+          <label class="meta">API Key (optional)</label>
+          <input id="apiKey" type="text" placeholder="X-API-Key" />
+        </div>
+        <div>
+          <button class="btn" id="btnSaveCfg">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <div class="chat" id="chat"></div>
+        <div class="inputbar">
+          <textarea id="prompt" placeholder="Type a question…"></textarea>
+          <button class="btn primary" id="btnSend">Send</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="row" style="justify-content:space-between;">
+          <div class="meta">Server responses</div>
+          <div class="row" style="gap:6px">
+            <button class="btn" id="btnMetrics">/metrics</button>
+            <button class="btn" id="btnLog">/improvement-log</button>
+          </div>
+        </div>
+        <pre id="serverOut" class="mono" style="margin-top:8px;max-height:56vh;overflow:auto;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- tiny helper utilities ---
+    const $ = (id) => document.getElementById(id);
+    const chat = $("chat");
+    const out  = $("serverOut");
+
+    function addMsg(role, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + (role === "user" ? "user" : "bot");
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+    }
+    function setOut(obj) {
+      out.textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
+    }
+    function loadCfg() {
+      const base = localStorage.getItem("tc_baseUrl") || "https://api.titancraft.io";
+      const key  = localStorage.getItem("tc_apiKey") || "";
+      $("baseUrl").value = base;
+      $("apiKey").value  = key;
+      $("statusBadge").textContent = "Base: " + base;
+      return { base, key };
+    }
+    function saveCfg() {
+      localStorage.setItem("tc_baseUrl", $("baseUrl").value.trim());
+      localStorage.setItem("tc_apiKey", $("apiKey").value.trim());
+      loadCfg();
+    }
+    loadCfg();
+
+    async function request(path, opts = {}) {
+      const { base, key } = loadCfg();
+      const url = base.replace(/\/+$/,"") + path;
+      const headers = { "Content-Type": "application/json" };
+      if (key) headers["X-API-Key"] = key;
+      const res = await fetch(url, { method: "GET", headers, ...opts });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { data = text; }
+      return { ok: res.ok, status: res.status, data };
+    }
+
+    // --- wire UI buttons ---
+    $("btnSaveCfg").onclick = () => { saveCfg(); addMsg("bot","Saved config."); };
+    $("btnClear").onclick = () => { chat.innerHTML=""; out.textContent=""; };
+
+    $("btnHealth").onclick = async () => {
+      const r = await request("/health");
+      setOut(r);
+      addMsg("bot", r.ok ? "Health: OK ✅" : "Health: ERR ❌");
+    };
+
+    $("btnVersion").onclick = async () => {
+      const r = await request("/version");
+      setOut(r);
+      addMsg("bot", r.ok ? "Fetched /version." : "Version error.");
+    };
+
+    $("btnMetrics").onclick = async () => {
+      const r = await request("/metrics");
+      setOut(r);
+      addMsg("bot", r.ok ? "Fetched /metrics." : "Metrics error.");
+    };
+
+    $("btnLog").onclick = async () => {
+      const r = await request("/improvement-log");
+      setOut(r);
+      addMsg("bot", r.ok ? "Fetched /improvement-log." : "Log error.");
+    };
+
+    $("btnSend").onclick = async () => {
+      const text = $("prompt").value.trim();
+      if (!text) return;
+      $("prompt").value = "";
+      addMsg("user", text);
+
+      const { base, key } = loadCfg();
+      const url = base.replace(/\/+$/,"") + "/v1/route";
+      const headers = { "Content-Type": "application/json" };
+      if (key) headers["X-API-Key"] = key;
+
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ prompt: text, task: "auto" })
+        });
+        const raw = await res.text();
+        let data; try { data = JSON.parse(raw); } catch { data = raw; }
+        setOut({ status: res.status, ok: res.ok, data });
+
+        // Prefer a helpful field if your backend returns one; otherwise echo JSON:
+        const answer = (data && (data.answer || data.output || data.text)) || JSON.stringify(data, null, 2);
+        addMsg("bot", String(answer));
+      } catch (e) {
+        setOut(String(e));
+        addMsg("bot", "Request failed.");
+      }
+    };
+
+    // Enter to send (shift+enter for newline)
+    $("prompt").addEventListener("keydown", (e)=>{
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        $("btnSend").click();
+      }
+    });
+  </script>
+</body>
+</html>
