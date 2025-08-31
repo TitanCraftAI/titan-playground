@@ -1,189 +1,311 @@
+// README (in-code)
+// Titan Playground – React + Tailwind (Vite)
+// ------------------------------------------------------------
+// This is a small, production-ready UI for play.titancraft.io.
+// - Framework: React + Vite + TypeScript
+// - Styling: TailwindCSS (no dropdowns; clean inputs/buttons)
+// - Env: uses VITE_API_BASE (defaults to https://api.titancraft.io)
+// - Deploy: Cloudflare Pages (Build: `npm run build`, Output: `dist`)
+// Repo structure:
+//   / (root)
+//   ├─ index.html              (Vite entry)
+//   ├─ package.json
+//   ├─ postcss.config.cjs
+//   ├─ tailwind.config.cjs
+//   ├─ tsconfig.json
+//   ├─ vite.config.ts
+//   └─ src/
+//      ├─ main.tsx
+//      ├─ App.tsx
+//      ├─ lib/task.ts         (auto task classifier)
+//      └─ components/
+//         ├─ Header.tsx
+//         ├─ PlaygroundForm.tsx
+//         └─ ResponseCard.tsx
+
+// ------------------------------------------------------------
+// package.json
+export default {
+  name: "titan-playground",
+  private: true,
+  version: "0.1.0",
+  type: "module",
+  scripts: {
+    dev: "vite",
+    build: "tsc -b && vite build",
+    preview: "vite preview"
+  },
+  dependencies: {
+    react: "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  devDependencies: {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    autoprefixer: "^10.4.20",
+    postcss: "^8.4.41",
+    tailwindcss: "^3.4.10",
+    typescript: "^5.5.4",
+    vite: "^5.4.1"
+  }
+}
+
+// ------------------------------------------------------------
+// index.html (at project root)
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>TitanCraft AI – Playground</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root { --bg:#0b0f14; --panel:#121820; --border:#1f2a36; --text:#e6edf3; --muted:#9fb0c3; --accent:#3da9fc; --ok:#16a34a; --err:#ef4444; }
-    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue","Noto Sans",sans-serif}
-    .wrap{max-width:960px;margin:0 auto;padding:24px}
-    .topbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-    .topbar input[type="text"]{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;min-width:280px}
-    .btn{background:var(--panel);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;cursor:pointer}
-    .btn:hover{border-color:var(--accent)}
-    .btn.primary{background:var(--accent);border-color:var(--accent);color:#001018}
-    .badge{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--border);border-radius:999px;color:var(--muted)}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-    .col{flex:1}
-    .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
-    .chat{height:56vh;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
-    .msg{max-width:80%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);white-space:pre-wrap}
-    .msg.user{align-self:flex-end;background:#0f1a24}
-    .msg.bot{align-self:flex-start;background:#0e141b}
-    .meta{font-size:12px;color:var(--muted)}
-    .inputbar{display:flex;gap:8px;margin-top:10px}
-    textarea{flex:1;background:var(--panel);border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px;min-height:56px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
-    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px; white-space:pre-wrap}
-    .ok{color:var(--ok)} .err{color:var(--err)}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="topbar">
-      <span class="badge">TitanCraft Playground</span>
-      <span class="badge" id="statusBadge">Base: https://api.titancraft.io</span>
-      <button class="btn" id="btnHealth">Health</button>
-      <button class="btn" id="btnVersion">Version</button>
-      <button class="btn" id="btnClear">Clear</button>
-    </div>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Titan Playground</title>
+    <meta name="description" content="Try the Titan router API in a clean UI" />
+  </head>
+  <body class="bg-neutral-950 text-neutral-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
 
-    <div class="panel">
-      <div class="row" style="gap:10px;align-items:flex-end;">
-        <div class="col">
-          <label class="meta">Base URL</label>
-          <input id="baseUrl" type="text" value="https://api.titancraft.io" />
-        </div>
-        <div style="width:260px">
-          <label class="meta">API Key (optional)</label>
-          <input id="apiKey" type="text" placeholder="X-API-Key" />
-        </div>
-        <div>
-          <button class="btn" id="btnSaveCfg">Save</button>
-        </div>
-      </div>
-    </div>
+// ------------------------------------------------------------
+// tailwind.config.cjs
+module.exports = {
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        titan: {
+          100: "#E6F0FF",
+          300: "#9BC0FF",
+          500: "#4D8DFF",
+          700: "#1E5CE6",
+          900: "#0F2E73",
+        },
+      },
+    },
+  },
+  plugins: [],
+};
 
-    <div class="grid">
-      <div class="panel">
-        <div class="chat" id="chat"></div>
-        <div class="inputbar">
-          <textarea id="prompt" placeholder="Type a question…"></textarea>
-          <button class="btn primary" id="btnSend">Send</button>
-        </div>
+// ------------------------------------------------------------
+// postcss.config.cjs
+module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+
+// ------------------------------------------------------------
+// tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}
+
+// ------------------------------------------------------------
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { port: 5173, host: true },
+  build: { sourcemap: true },
+});
+
+// ------------------------------------------------------------
+// src/main.tsx
+import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App";
+import "./styles.css";
+
+createRoot(document.getElementById("root")!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+// ------------------------------------------------------------
+// src/styles.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+// ------------------------------------------------------------
+// src/lib/task.ts – tiny classifier, mirrors server logic
+export type Task = "auto" | "writing" | "math" | "search" | "general";
+
+export function inferTask(text: string): Task {
+  const t = text.toLowerCase();
+  if (["sum", "solve", "=", "+", "-", "×", "÷", "integral", "derivative", "probability", "compute"].some(k => t.includes(k))) return "math";
+  if (["draft", "rewrite", "tone", "summarize", "essay", "blog", "email"].some(k => t.includes(k))) return "writing";
+  if (["search", "find sources", "citations", "reference", "web results"].some(k => t.includes(k))) return "search";
+  return "general";
+}
+
+// ------------------------------------------------------------
+// src/components/Header.tsx
+export default function Header() {
+  return (
+    <header className="border-b border-neutral-800 sticky top-0 z-50 backdrop-blur">
+      <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between">
+        <div className="font-semibold tracking-tight">Titan Playground</div>
+        <a href="https://titancraft.io" className="text-sm text-neutral-300 hover:text-white">titancraft.io</a>
       </div>
-      <div class="panel">
-        <div class="row" style="justify-content:space-between;">
-          <div class="meta">Server responses</div>
-          <div class="row" style="gap:6px">
-            <button class="btn" id="btnMetrics">/metrics</button>
-            <button class="btn" id="btnLog">/improvement-log</button>
+    </header>
+  );
+}
+
+// ------------------------------------------------------------
+// src/components/ResponseCard.tsx
+import React from "react";
+
+export function ResponseCard({ title, json }: { title: string; json: unknown }) {
+  return (
+    <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60">
+      <div className="text-sm text-neutral-300 mb-2">{title}</div>
+      <pre className="whitespace-pre-wrap text-xs text-neutral-200 overflow-x-auto">
+        {JSON.stringify(json, null, 2)}
+      </pre>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+// src/components/PlaygroundForm.tsx
+import React, { useMemo, useState } from "react";
+import { inferTask, Task } from "../lib/task";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "https://api.titancraft.io";
+
+export default function PlaygroundForm() {
+  const [prompt, setPrompt] = useState("");
+  const [task, setTask] = useState<Task>("auto");
+  const [pending, setPending] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const inferred = useMemo(() => (task === "auto" ? inferTask(prompt) : task), [task, prompt]);
+
+  async function send() {
+    setPending(true);
+    setError(null);
+    setResult(null);
+    try {
+      const r = await fetch(`${API_BASE}/v1/route`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task, prompt })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
+      setResult(data);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60">
+        <label className="block text-sm text-neutral-300 mb-2">Prompt</label>
+        <textarea
+          className="w-full min-h-[140px] rounded-xl bg-neutral-950 border border-neutral-800 px-3 py-2 outline-none focus:border-titan-500"
+          placeholder="Type anything. We'll auto-detect the task type."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+        />
+        <div className="mt-3 flex items-center justify-between text-xs text-neutral-400">
+          <div>
+            Task: <span className="text-neutral-200">{inferred}</span>
+            {task !== "auto" && (
+              <span className="ml-2">(forced: {task})</span>
+            )}
+          </div>
+          <div className="space-x-1">
+            {["auto", "writing", "math", "search", "general"].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTask(t as Task)}
+                className={`px-2 py-1 rounded-lg border ${task === t ? "border-titan-500 text-white" : "border-neutral-800 text-neutral-300"}`}
+              >
+                {t}
+              </button>
+            ))}
           </div>
         </div>
-        <pre id="serverOut" class="mono" style="margin-top:8px;max-height:56vh;overflow:auto;"></pre>
+        <div className="mt-4 flex gap-2">
+          <button
+            disabled={pending || !prompt.trim()}
+            onClick={send}
+            className="rounded-xl px-4 py-2 bg-titan-700 hover:bg-titan-500 disabled:opacity-40"
+          >
+            {pending ? "Sending…" : "Send to Titan"}
+          </button>
+          <button
+            disabled={pending}
+            onClick={() => { setPrompt(""); setResult(null); setError(null); setTask("auto"); }}
+            className="rounded-xl px-4 py-2 border border-neutral-700"
+          >
+            Clear
+          </button>
+        </div>
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-red-500/40 bg-red-900/20 p-3 text-sm text-red-200">{error}</div>
+      )}
+
+      {result && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60">
+            <div className="text-sm text-neutral-300 mb-2">Router response</div>
+            <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+          </div>
+          <div className="rounded-2xl border border-neutral-800 p-4 bg-neutral-900/60">
+            <div className="text-sm text-neutral-300 mb-2">Debug</div>
+            <ul className="text-xs list-disc pl-4 space-y-1">
+              <li><code>API_BASE</code>: {API_BASE}</li>
+              <li>Task forced: {task}</li>
+              <li>Task inferred: {inferred}</li>
+              <li>Prompt length: {prompt.length} chars</li>
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
-  </div>
+  );
+}
 
-  <script>
-    // --- tiny helper utilities ---
-    const $ = (id) => document.getElementById(id);
-    const chat = $("chat");
-    const out  = $("serverOut");
+// ------------------------------------------------------------
+// src/App.tsx
+import Header from "./components/Header";
+import PlaygroundForm from "./components/PlaygroundForm";
 
-    function addMsg(role, text) {
-      const div = document.createElement("div");
-      div.className = "msg " + (role === "user" ? "user" : "bot");
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-    }
-    function setOut(obj) {
-      out.textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
-    }
-    function loadCfg() {
-      const base = localStorage.getItem("tc_baseUrl") || "https://api.titancraft.io";
-      const key  = localStorage.getItem("tc_apiKey") || "";
-      $("baseUrl").value = base;
-      $("apiKey").value  = key;
-      $("statusBadge").textContent = "Base: " + base;
-      return { base, key };
-    }
-    function saveCfg() {
-      localStorage.setItem("tc_baseUrl", $("baseUrl").value.trim());
-      localStorage.setItem("tc_apiKey", $("apiKey").value.trim());
-      loadCfg();
-    }
-    loadCfg();
-
-    async function request(path, opts = {}) {
-      const { base, key } = loadCfg();
-      const url = base.replace(/\/+$/,"") + path;
-      const headers = { "Content-Type": "application/json" };
-      if (key) headers["X-API-Key"] = key;
-      const res = await fetch(url, { method: "GET", headers, ...opts });
-      const text = await res.text();
-      let data;
-      try { data = JSON.parse(text); } catch { data = text; }
-      return { ok: res.ok, status: res.status, data };
-    }
-
-    // --- wire UI buttons ---
-    $("btnSaveCfg").onclick = () => { saveCfg(); addMsg("bot","Saved config."); };
-    $("btnClear").onclick = () => { chat.innerHTML=""; out.textContent=""; };
-
-    $("btnHealth").onclick = async () => {
-      const r = await request("/health");
-      setOut(r);
-      addMsg("bot", r.ok ? "Health: OK ✅" : "Health: ERR ❌");
-    };
-
-    $("btnVersion").onclick = async () => {
-      const r = await request("/version");
-      setOut(r);
-      addMsg("bot", r.ok ? "Fetched /version." : "Version error.");
-    };
-
-    $("btnMetrics").onclick = async () => {
-      const r = await request("/metrics");
-      setOut(r);
-      addMsg("bot", r.ok ? "Fetched /metrics." : "Metrics error.");
-    };
-
-    $("btnLog").onclick = async () => {
-      const r = await request("/improvement-log");
-      setOut(r);
-      addMsg("bot", r.ok ? "Fetched /improvement-log." : "Log error.");
-    };
-
-    $("btnSend").onclick = async () => {
-      const text = $("prompt").value.trim();
-      if (!text) return;
-      $("prompt").value = "";
-      addMsg("user", text);
-
-      const { base, key } = loadCfg();
-      const url = base.replace(/\/+$/,"") + "/v1/route";
-      const headers = { "Content-Type": "application/json" };
-      if (key) headers["X-API-Key"] = key;
-
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ prompt: text, task: "auto" })
-        });
-        const raw = await res.text();
-        let data; try { data = JSON.parse(raw); } catch { data = raw; }
-        setOut({ status: res.status, ok: res.ok, data });
-
-        // Prefer a helpful field if your backend returns one; otherwise echo JSON:
-        const answer = (data && (data.answer || data.output || data.text)) || JSON.stringify(data, null, 2);
-        addMsg("bot", String(answer));
-      } catch (e) {
-        setOut(String(e));
-        addMsg("bot", "Request failed.");
-      }
-    };
-
-    // Enter to send (shift+enter for newline)
-    $("prompt").addEventListener("keydown", (e)=>{
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        $("btnSend").click();
-      }
-    });
-  </script>
-</body>
-</html>
+export default function App() {
+  return (
+    <div className="min-h-screen">
+      <Header />
+      <main className="mx-auto max-w-5xl px-4 py-8 space-y-6">
+        <h1 className="text-2xl font-semibold">Try the Titan Router</h1>
+        <p className="text-neutral-300 text-sm max-w-prose">Simple interface to call your router at <code>api.titancraft.io</code>. No dropdowns, just type and send. Use the task chips if you want to force a type.</p>
+        <PlaygroundForm />
+      </main>
+    </div>
+  );
+}
