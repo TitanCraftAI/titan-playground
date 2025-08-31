@@ -1,94 +1,38 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type Task = "auto" | "math" | "writing" | "search";
+type Json = Record<string, any>;
 
-type HistoryItem = {
-  id: string;
-  ts: string;
-  base: string;
-  task: Task;
-  prompt: string;
-  status: number | null;
-  ok: boolean;
-  responsePreview: string;
-  raw: any;
-};
+type TaskType = "auto" | "math" | "writing" | "search";
 
-const LS_KEYS = {
-  base: "tc_baseUrl",
-  key: "tc_apiKey",
-  history: "tc_history_v1",
-};
+const TASKS: { key: TaskType; label: string }[] = [
+  { key: "auto", label: "Auto" },
+  { key: "math", label: "Math" },
+  { key: "writing", label: "Writing" },
+  { key: "search", label: "Search" },
+];
 
-function loadBase(): string {
-  return localStorage.getItem(LS_KEYS.base) || "https://api.titancraft.io";
-}
-function loadKey(): string {
-  return localStorage.getItem(LS_KEYS.key) || "";
-}
-function saveBase(v: string) {
-  localStorage.setItem(LS_KEYS.base, v.trim());
-}
-function saveKey(v: string) {
-  localStorage.setItem(LS_KEYS.key, v.trim());
-}
-function loadHistory(): HistoryItem[] {
+function pretty(obj: any) {
   try {
-    return JSON.parse(localStorage.getItem(LS_KEYS.history) || "[]") || [];
+    return JSON.stringify(obj, null, 2);
   } catch {
-    return [];
+    return String(obj);
   }
 }
-function saveHistory(items: HistoryItem[]) {
-  localStorage.setItem(LS_KEYS.history, JSON.stringify(items.slice(0, 10)));
-}
-
-const TaskChip: React.FC<{
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}> = ({ label, active, onClick }) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={[
-      "px-3 py-1 rounded-full border text-sm",
-      active
-        ? "bg-titan-700 border-titan-700 text-white"
-        : "bg-neutral-900 border-neutral-700 text-neutral-300 hover:border-neutral-500",
-    ].join(" ")}
-  >
-    {label}
-  </button>
-);
-
-const JsonBox: React.FC<{ value: any }> = ({ value }) => {
-  const text =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return (
-    <pre className="max-h-[56vh] overflow-auto text-xs bg-neutral-900 border border-neutral-800 rounded-lg p-3 whitespace-pre-wrap">
-      {text}
-    </pre>
-  );
-};
 
 export default function PlaygroundForm() {
-  const [base, setBase] = useState(loadBase);
-  const [apiKey, setApiKey] = useState(loadKey);
-  const [task, setTask] = useState<Task>("auto");
-  const [prompt, setPrompt] = useState("");
-  const [serverOut, setServerOut] = useState<any>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [history, setHistory] = useState<HistoryItem[]>(loadHistory);
-  const taRef = useRef<HTMLTextAreaElement>(null);
+  // --- persisted settings (localStorage) ---
+  const [baseUrl, setBaseUrl] = useState<string>(() => {
+    return localStorage.getItem("tc_baseUrl") || "https://api.titancraft.io";
+  });
+  const [apiKey, setApiKey] = useState<string>(() => {
+    return localStorage.getItem("tc_apiKey") || "";
+  });
 
-  useEffect(() => {
-    // autosize textarea a tiny bit
-    const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(200, ta.scrollHeight)}px`;
-  }, [prompt]);
+  // --- runtime state ---
+  const [task, setTask] = useState<TaskType>("auto");
+  const [prompt, setPrompt] = useState("");
+  const [server, setServer] = useState<string>(""); // right-pane text
+  const [busy, setBusy] = useState(false);
 
   const headers = useMemo(() => {
     const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -96,249 +40,253 @@ export default function PlaygroundForm() {
     return h;
   }, [apiKey]);
 
-  const saveCfg = () => {
-    saveBase(base);
-    saveKey(apiKey);
-  };
-
-  const clearLocal = () => {
-    setPrompt("");
-    setServerOut(null);
-  };
-
-  const copy = (text: string) => navigator.clipboard.writeText(text);
-
-  async function get(path: string) {
-    const url = base.replace(/\/+$/, "") + path;
-    const res = await fetch(url, { method: "GET", headers });
-    const raw = await res.text();
-    let data: any;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      data = raw;
-    }
-    setServerOut({ ok: res.ok, status: res.status, data });
-    return { res, data, raw };
+  function saveSettings() {
+    localStorage.setItem("tc_baseUrl", baseUrl);
+    localStorage.setItem("tc_apiKey", apiKey);
+    toast("Saved.");
   }
 
-  async function postRoute(body: any) {
-    const url = base.replace(/\/+$/, "") + "/v1/route";
+  function toast(msg: string) {
+    setServer((prev) =>
+      [prev, `\n${new Date().toISOString()}  ${msg}`].filter(Boolean).join("\n")
+    );
+  }
+
+  async function call(path: string, init?: RequestInit) {
+    const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
     const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
+      ...init,
+      headers: { ...(init?.headers || {}), ...headers },
     });
-    const raw = await res.text();
-    let data: any;
+    const text = await res.text();
     try {
-      data = JSON.parse(raw);
+      return { ok: res.ok, status: res.status, json: JSON.parse(text) as Json };
     } catch {
-      data = raw;
+      return { ok: res.ok, status: res.status, text };
     }
-    setServerOut({ ok: res.ok, status: res.status, data });
-    return { res, data, raw };
   }
 
-  async function send() {
-    const text = prompt.trim();
-    if (!text || submitting) return;
-    setSubmitting(true);
+  // ---------- built-in buttons ----------
 
+  async function onHealth() {
+    setBusy(true);
     try {
-      const { res, data, raw } = await postRoute({
-        prompt: text,
-        task, // "auto" by default, or forced via chip
-      });
-
-      const preview =
-        typeof data === "string"
-          ? data.slice(0, 300)
-          : JSON.stringify(data, null, 2).slice(0, 300);
-
-      const item: HistoryItem = {
-        id: `${Date.now()}`,
-        ts: new Date().toISOString(),
-        base,
-        task,
-        prompt: text,
-        status: res.status,
-        ok: res.ok,
-        responsePreview: preview,
-        raw: data,
-      };
-      const next = [item, ...history].slice(0, 10);
-      setHistory(next);
-      saveHistory(next);
+      const r = await call(`/health`);
+      setServer(pretty(r));
     } catch (e: any) {
-      setServerOut({ ok: false, status: null, data: String(e) });
+      setServer(pretty({ ok: false, error: String(e) }));
     } finally {
-      setSubmitting(false);
+      setBusy(false);
+    }
+  }
+
+  async function onVersion() {
+    setBusy(true);
+    try {
+      const r = await call(`/version`);
+      setServer(pretty(r));
+    } catch (e: any) {
+      setServer(pretty({ ok: false, error: String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onMetrics() {
+    setBusy(true);
+    try {
+      const r = await call(`/metrics`);
+      setServer(pretty(r));
+    } catch (e: any) {
+      setServer(pretty({ ok: false, error: String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onImprovementLog() {
+    setBusy(true);
+    try {
+      const r = await call(`/improvement-log`);
+      setServer(pretty(r));
+    } catch (e: any) {
+      setServer(pretty({ ok: false, error: String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- main /v1/route ----------
+
+  async function onSend() {
+    if (!prompt.trim()) return toast("Type something first.");
+    setBusy(true);
+    setServer((s) => s || ""); // keep pane visible
+    try {
+      const r = await call(`/v1/route`, {
+        method: "POST",
+        body: JSON.stringify({ prompt, task }),
+      });
+      setServer(pretty(r));
+    } catch (e: any) {
+      setServer(pretty({ ok: false, error: String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // ---------- Admin panel ----------
+  // These call the server admin endpoints. They also send X-API-Key if provided.
+  async function adminHit(path: string, verb: "POST" | "DELETE" = "POST") {
+    setBusy(true);
+    try {
+      const r = await call(path, { method: verb });
+      setServer(pretty(r));
+    } catch (e: any) {
+      setServer(pretty({ ok: false, error: String(e) }));
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <div className="grid md:grid-cols-2 gap-6">
-      {/* Left column */}
+    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      {/* LEFT */}
       <div className="space-y-4">
-        {/* Config row */}
-        <div className="space-y-3">
-          <div>
+        {/* Settings row */}
+        <div className="flex items-center gap-2">
+          <div className="grow">
             <label className="text-xs text-neutral-400">Base URL</label>
             <input
-              value={base}
-              onChange={(e) => setBase(e.target.value)}
-              className="w-full mt-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2"
+              className="w-full rounded-md bg-neutral-900 px-3 py-2 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
             />
           </div>
-          <div className="flex gap-2 items-end">
-            <div className="flex-1">
-              <label className="text-xs text-neutral-400">API Key (optional)</label>
-              <input
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="X-API-Key"
-                className="w-full mt-1 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2"
-              />
-            </div>
-            <button onClick={saveCfg} className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500">
-              Save
-            </button>
-            <button
-              onClick={() => get("/health")}
-              className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500"
-            >
-              Health
-            </button>
+          <div className="w-56">
+            <label className="text-xs text-neutral-400">API Key (optional)</label>
+            <input
+              className="w-full rounded-md bg-neutral-900 px-3 py-2 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
+              value={apiKey}
+              placeholder="X-API-Key"
+              onChange={(e) => setApiKey(e.target.value)}
+            />
           </div>
+          <button
+            onClick={saveSettings}
+            className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
+          >
+            Save
+          </button>
+          <button
+            onClick={onHealth}
+            className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
+          >
+            Health
+          </button>
         </div>
 
         {/* Task chips */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-neutral-400 mr-1">Task:</span>
-          {([
-            ["Auto", "auto"],
-            ["Math", "math"],
-            ["Writing", "writing"],
-            ["Search", "search"],
-          ] as const).map(([label, value]) => (
-            <TaskChip
-              key={value}
-              label={label}
-              active={task === value}
-              onClick={() => setTask(value)}
-            />
-          ))}
-        </div>
-
-        {/* Prompt + send */}
-        <div className="space-y-2">
-          <textarea
-            ref={taRef}
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Type a question…"
-            className="w-full min-h-[90px] rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2"
-          />
-          <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-neutral-400">Task:</span>
+          {TASKS.map((t) => (
             <button
-              onClick={() => get("/version")}
-              className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500"
+              key={t.key}
+              onClick={() => setTask(t.key)}
+              className={[
+                "rounded-full px-3 py-1 text-sm ring-1 ring-neutral-700 transition",
+                task === t.key ? "bg-neutral-700" : "bg-neutral-900 hover:bg-neutral-800",
+              ].join(" ")}
+            >
+              {t.label}
+            </button>
+          ))}
+          <div className="ml-auto flex gap-2">
+            <button
+              onClick={onVersion}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
             >
               Version
             </button>
             <button
-              onClick={clearLocal}
-              className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500"
+              onClick={onMetrics}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
             >
-              Clear
+              /metrics
             </button>
-            <div className="flex-1" />
             <button
-              onClick={send}
-              disabled={submitting || !prompt.trim()}
-              className="px-4 py-2 rounded-lg bg-titan-700 hover:bg-titan-500 disabled:opacity-50"
+              onClick={onImprovementLog}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
             >
-              {submitting ? "Sending…" : "Send"}
+              /improvement-log
             </button>
           </div>
         </div>
 
-        {/* Mini history */}
-        <div className="space-y-2">
-          <div className="text-sm text-neutral-300">Recent</div>
-          <div className="space-y-2">
-            {history.length === 0 && (
-              <div className="text-xs text-neutral-500">No requests yet.</div>
-            )}
-            {history.map((h) => (
-              <div
-                key={h.id}
-                className="border border-neutral-800 rounded-lg p-3 bg-neutral-900"
-              >
-                <div className="flex items-center gap-2 text-xs text-neutral-400">
-                  <span>{new Date(h.ts).toLocaleTimeString()}</span>
-                  <span>•</span>
-                  <span className="uppercase">{h.task}</span>
-                  <span>•</span>
-                  <span className={h.ok ? "text-green-400" : "text-red-400"}>
-                    {h.ok ? h.status : "ERR"}
-                  </span>
-                  <div className="flex-1" />
-                  <button
-                    onClick={() => copy(h.prompt)}
-                    className="px-2 py-1 rounded border border-neutral-700 hover:border-neutral-500"
-                  >
-                    Copy prompt
-                  </button>
-                  <button
-                    onClick={() =>
-                      copy(
-                        typeof h.raw === "string"
-                          ? h.raw
-                          : JSON.stringify(h.raw, null, 2)
-                      )
-                    }
-                    className="px-2 py-1 rounded border border-neutral-700 hover:border-neutral-500"
-                  >
-                    Copy JSON
-                  </button>
-                </div>
-                <div className="mt-2 text-sm text-neutral-200 line-clamp-2">
-                  {h.prompt}
-                </div>
-                <pre className="mt-2 text-xs text-neutral-400 whitespace-pre-wrap max-h-28 overflow-auto">
-                  {h.responsePreview}
-                </pre>
-              </div>
-            ))}
+        {/* Prompt input */}
+        <div>
+          <textarea
+            className="h-32 w-full resize-y rounded-md bg-neutral-900 p-3 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
+            placeholder="Type a question…"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+          />
+          <div className="mt-2 flex justify-end">
+            <button
+              disabled={busy}
+              onClick={onSend}
+              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {busy ? "Sending…" : "Send"}
+            </button>
           </div>
+        </div>
+
+        {/* Admin controls */}
+        <div className="rounded-xl border border-neutral-800 p-3">
+          <div className="mb-2 text-xs font-semibold text-neutral-300">Admin</div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+            <button
+              disabled={busy}
+              onClick={() => adminHit(`/admin/freeze`)}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
+              title="Freeze auto-tuning (stop promotions/rollbacks)"
+            >
+              Freeze
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => adminHit(`/admin/unfreeze`)}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
+            >
+              Unfreeze
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => adminHit(`/admin/rollback`)}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
+            >
+              Rollback
+            </button>
+            <button
+              disabled={busy}
+              onClick={() => adminHit(`/admin/clear-candidate`, "DELETE")}
+              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
+            >
+              Clear candidate
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-neutral-400">
+            Admin calls include your <code>X-API-Key</code> header if provided.
+          </p>
         </div>
       </div>
 
-      {/* Right column: server output */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <button
-            onClick={() => get("/metrics")}
-            className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500"
-          >
-            /metrics
-          </button>
-          <button
-            onClick={() => get("/improvement-log")}
-            className="px-3 py-2 rounded-lg border border-neutral-700 bg-neutral-800 hover:border-neutral-500"
-          >
-            /improvement-log
-          </button>
-        </div>
-        {!serverOut ? (
-          <div className="text-neutral-500 text-sm">
-            Server responses will appear here.
-          </div>
-        ) : (
-          <JsonBox value={serverOut} />
-        )}
+      {/* RIGHT: server responses */}
+      <div className="rounded-xl border border-neutral-800 p-3">
+        <pre className="h-[520px] overflow-auto text-[12px] leading-5">
+          {server || "// server responses will appear here"}
+        </pre>
       </div>
     </div>
   );
