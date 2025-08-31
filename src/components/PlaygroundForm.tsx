@@ -1,293 +1,377 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-type Json = Record<string, any>;
+/** localStorage keys */
+const LS_BASE = "tc.base";
+const LS_KEY = "tc.key";
+const LS_RECENT = "tc.recent";
 
-type TaskType = "auto" | "math" | "writing" | "search";
+/** tiny helpers */
+const pretty = (obj: any) => JSON.stringify(obj, null, 2);
+const now = () => performance.now();
 
-const TASKS: { key: TaskType; label: string }[] = [
-  { key: "auto", label: "Auto" },
-  { key: "math", label: "Math" },
-  { key: "writing", label: "Writing" },
-  { key: "search", label: "Search" },
-];
+type Task = "auto" | "math" | "writing" | "search";
 
-function pretty(obj: any) {
-  try {
-    return JSON.stringify(obj, null, 2);
-  } catch {
-    return String(obj);
-  }
-}
+type RouteBody = {
+  prompt: string;
+  task?: Task;
+};
+
+type Jsonish = Record<string, any> | Array<any> | string | number | boolean | null;
 
 export default function PlaygroundForm() {
-  // --- persisted settings (localStorage) ---
-  const [baseUrl, setBaseUrl] = useState<string>(() => {
-    return localStorage.getItem("tc_baseUrl") || "https://api.titancraft.io";
-  });
-  const [apiKey, setApiKey] = useState<string>(() => {
-    return localStorage.getItem("tc_apiKey") || "";
-  });
-
-  // --- runtime state ---
-  const [task, setTask] = useState<TaskType>("auto");
-  const [prompt, setPrompt] = useState("");
-  const [server, setServer] = useState<string>(""); // right-pane text
-  const [busy, setBusy] = useState(false);
-
-  const headers = useMemo(() => {
-    const h: Record<string, string> = { "Content-Type": "application/json" };
-    if (apiKey.trim()) h["X-API-Key"] = apiKey.trim();
-    return h;
-  }, [apiKey]);
-
-  function saveSettings() {
-    localStorage.setItem("tc_baseUrl", baseUrl);
-    localStorage.setItem("tc_apiKey", apiKey);
-    toast("Saved.");
-  }
-
-  function toast(msg: string) {
-    setServer((prev) =>
-      [prev, `\n${new Date().toISOString()}  ${msg}`].filter(Boolean).join("\n")
-    );
-  }
-
-  async function call(path: string, init?: RequestInit) {
-    const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
-    const res = await fetch(url, {
-      ...init,
-      headers: { ...(init?.headers || {}), ...headers },
-    });
-    const text = await res.text();
+  const [base, setBase] = useState<string>(
+    () => localStorage.getItem(LS_BASE) || "https://api.titancraft.io"
+  );
+  const [key, setKey] = useState<string>(() => localStorage.getItem(LS_KEY) || "");
+  const [task, setTask] = useState<Task>("auto");
+  const [input, setInput] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [result, setResult] = useState<Jsonish | null>(null);
+  const [status, setStatus] = useState<number | null>(null);
+  const [ms, setMs] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<string[]>(() => {
     try {
-      return { ok: res.ok, status: res.status, json: JSON.parse(text) as Json };
+      return JSON.parse(localStorage.getItem(LS_RECENT) || "[]");
     } catch {
-      return { ok: res.ok, status: res.status, text };
+      return [];
     }
-  }
+  });
 
-  // ---------- built-in buttons ----------
+  const canSend = useMemo(() => input.trim().length > 0 && !loading, [input, loading]);
 
-  async function onHealth() {
-    setBusy(true);
+  const resultBoxRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    localStorage.setItem(LS_BASE, base);
+  }, [base]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_KEY, key);
+  }, [key]);
+
+  useEffect(() => {
+    localStorage.setItem(LS_RECENT, JSON.stringify(recent.slice(0, 10)));
+  }, [recent]);
+
+  /** network wrappers */
+  async function getJSON(path: string) {
+    setLoading(true);
+    setError(null);
+    setStatus(null);
+    setResult(null);
+    setMs(null);
+    const t0 = now();
     try {
-      const r = await call(`/health`);
-      setServer(pretty(r));
-    } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onVersion() {
-    setBusy(true);
-    try {
-      const r = await call(`/version`);
-      setServer(pretty(r));
-    } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onMetrics() {
-    setBusy(true);
-    try {
-      const r = await call(`/metrics`);
-      setServer(pretty(r));
-    } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onImprovementLog() {
-    setBusy(true);
-    try {
-      const r = await call(`/improvement-log`);
-      setServer(pretty(r));
-    } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // ---------- main /v1/route ----------
-
-  async function onSend() {
-    if (!prompt.trim()) return toast("Type something first.");
-    setBusy(true);
-    setServer((s) => s || ""); // keep pane visible
-    try {
-      const r = await call(`/v1/route`, {
-        method: "POST",
-        body: JSON.stringify({ prompt, task }),
+      const url = `${base}${path}`;
+      const r = await fetch(url, {
+        headers: {
+          ...(key ? { "X-API-Key": key } : {}),
+        },
       });
-      setServer(pretty(r));
+      setStatus(r.status);
+      const text = await r.text();
+      let body: any = text;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        /* leave as text */
+      }
+      setResult(body);
+      setMs(now() - t0);
     } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
+      setError(e?.message || "Request failed");
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
 
-  // ---------- Admin panel ----------
-  // These call the server admin endpoints. They also send X-API-Key if provided.
-  async function adminHit(path: string, verb: "POST" | "DELETE" = "POST") {
-    setBusy(true);
+  async function postJSON(path: string, json: any) {
+    setLoading(true);
+    setError(null);
+    setStatus(null);
+    setResult(null);
+    setMs(null);
+    const t0 = now();
     try {
-      const r = await call(path, { method: verb });
-      setServer(pretty(r));
+      const url = `${base}${path}`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(key ? { "X-API-Key": key } : {}),
+        },
+        body: JSON.stringify(json),
+      });
+      setStatus(r.status);
+      const text = await r.text();
+      let body: any = text;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        /* leave as text */
+      }
+      setResult(body);
+      setMs(now() - t0);
     } catch (e: any) {
-      setServer(pretty({ ok: false, error: String(e) }));
+      setError(e?.message || "Request failed");
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   }
+
+  /** actions */
+  const doVersion = () => getJSON("/version");
+  const doHealth = () => getJSON("/health");
+  const doMetrics = () => getJSON("/metrics");
+  const doImprovementLog = () => getJSON("/improvement-log");
+
+  const send = async () => {
+    if (!canSend) return;
+    const body: RouteBody = { prompt: input.trim() };
+    if (task !== "auto") body.task = task;
+    await postJSON("/v1/route", body);
+    // store in recent
+    const next = [input.trim(), ...recent.filter((r) => r !== input.trim())];
+    setRecent(next.slice(0, 10));
+  };
+
+  /** Admin endpoints – require key */
+  const requireKey = () => {
+    if (!key) {
+      setError("Admin calls require X-API-Key (add it above).");
+      return false;
+    }
+    return true;
+  };
+
+  const admin = {
+    freeze: () => requireKey() && postJSON("/v1/freeze", {}),
+    unfreeze: () => requireKey() && postJSON("/v1/unfreeze", {}),
+    rollback: () => requireKey() && postJSON("/v1/rollback", {}),
+    clearCandidate: () => requireKey() && postJSON("/v1/clear-candidate", {}),
+  };
+
+  /** UX niceties */
+  const copyResult = async () => {
+    try {
+      await navigator.clipboard.writeText(
+        typeof result === "string" ? result : pretty(result)
+      );
+    } catch { /* ignore */ }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      void send();
+    }
+  };
+
+  const applyRecent = (r: string) => {
+    setInput(r);
+    // focus textarea
+    requestAnimationFrame(() => resultBoxRef.current?.focus());
+  };
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      {/* LEFT */}
-      <div className="space-y-4">
-        {/* Settings row */}
-        <div className="flex items-center gap-2">
-          <div className="grow">
-            <label className="text-xs text-neutral-400">Base URL</label>
-            <input
-              className="w-full rounded-md bg-neutral-900 px-3 py-2 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </div>
-          <div className="w-56">
-            <label className="text-xs text-neutral-400">API Key (optional)</label>
-            <input
-              className="w-full rounded-md bg-neutral-900 px-3 py-2 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
-              value={apiKey}
-              placeholder="X-API-Key"
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </div>
-          <button
-            onClick={saveSettings}
-            className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-          >
-            Save
-          </button>
-          <button
-            onClick={onHealth}
-            className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-          >
-            Health
-          </button>
+    <div className="space-y-6">
+      {/* Config */}
+      <section className="grid gap-3 md:grid-cols-3">
+        <div className="md:col-span-2">
+          <label className="block text-xs text-neutral-400 mb-1">Base URL</label>
+          <input
+            value={base}
+            onChange={(e) => setBase(e.target.value)}
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2"
+            placeholder="https://api.titancraft.io"
+          />
         </div>
+        <div>
+          <label className="block text-xs text-neutral-400 mb-1">API Key (optional)</label>
+          <input
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            className="w-full rounded-lg bg-neutral-900 border border-neutral-700 px-3 py-2"
+            placeholder="X-API-Key"
+          />
+        </div>
+      </section>
 
-        {/* Task chips */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-neutral-400">Task:</span>
-          {TASKS.map((t) => (
+      {/* Quick actions */}
+      <section className="flex flex-wrap items-center gap-2">
+        <button
+          onClick={doVersion}
+          disabled={loading}
+          className="btn">Version</button>
+        <button onClick={doHealth} disabled={loading} className="btn">Health</button>
+        <button onClick={doMetrics} disabled={loading} className="btn">/metrics</button>
+        <button onClick={doImprovementLog} disabled={loading} className="btn">
+          /improvement-log
+        </button>
+        <div className="ml-auto flex items-center gap-1">
+          {(["auto", "math", "writing", "search"] as Task[]).map((t) => (
             <button
-              key={t.key}
-              onClick={() => setTask(t.key)}
-              className={[
-                "rounded-full px-3 py-1 text-sm ring-1 ring-neutral-700 transition",
-                task === t.key ? "bg-neutral-700" : "bg-neutral-900 hover:bg-neutral-800",
-              ].join(" ")}
+              key={t}
+              disabled={loading}
+              onClick={() => setTask(t)}
+              className={
+                "chip " +
+                (task === t ? "chip--active" : "")
+              }
             >
-              {t.label}
+              {t[0].toUpperCase() + t.slice(1)}
             </button>
           ))}
-          <div className="ml-auto flex gap-2">
-            <button
-              onClick={onVersion}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-            >
-              Version
-            </button>
-            <button
-              onClick={onMetrics}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-            >
-              /metrics
-            </button>
-            <button
-              onClick={onImprovementLog}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700"
-            >
-              /improvement-log
-            </button>
+        </div>
+      </section>
+
+      {/* Prompt */}
+      <section>
+        <label className="block text-xs text-neutral-400 mb-1">
+          Type a question… <span className="opacity-60">(Cmd/Ctrl+Enter to send)</span>
+        </label>
+        <textarea
+          ref={resultBoxRef}
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={onKeyDown}
+          rows={6}
+          className="w-full rounded-xl bg-neutral-950 border border-neutral-800 px-3 py-3 resize-y"
+          placeholder="e.g., four times five"
+        />
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={send}
+            disabled={!canSend}
+            className="btn btn--primary"
+          >
+            {loading ? "Sending…" : "Send"}
+          </button>
+          <button
+            onClick={() => {
+              setInput("");
+              setResult(null);
+              setError(null);
+              setStatus(null);
+              setMs(null);
+            }}
+            disabled={loading}
+            className="btn"
+          >
+            Clear
+          </button>
+        </div>
+      </section>
+
+      {/* Feedback */}
+      {error && (
+        <div className="rounded-lg border border-red-600 bg-red-950/40 px-3 py-2 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Result */}
+      <section className="grid gap-3 md:grid-cols-2">
+        <div className="space-y-2">
+          <div className="text-xs text-neutral-400">Server responses</div>
+          <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3">
+            <div className="mb-2 flex items-center gap-3 text-xs text-neutral-400">
+              <span>Status: {status ?? "—"}</span>
+              <span>Time: {ms ? `${ms.toFixed(0)}ms` : "—"}</span>
+              <span className="ml-auto" />
+              <button
+                className="text-neutral-300 hover:underline disabled:opacity-40"
+                onClick={copyResult}
+                disabled={!result}
+              >
+                Copy JSON
+              </button>
+            </div>
+            <pre className="max-h-[420px] overflow-auto text-[12.5px] leading-5">
+{result ? pretty(result) : pretty({ ok: true })}
+            </pre>
           </div>
         </div>
 
-        {/* Prompt input */}
-        <div>
-          <textarea
-            className="h-32 w-full resize-y rounded-md bg-neutral-900 p-3 outline-none ring-1 ring-neutral-800 focus:ring-neutral-600"
-            placeholder="Type a question…"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <div className="mt-2 flex justify-end">
-            <button
-              disabled={busy}
-              onClick={onSend}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {busy ? "Sending…" : "Send"}
-            </button>
+        {/* Admin + Recent */}
+        <div className="space-y-3">
+          <div>
+            <div className="text-xs text-neutral-400 mb-2">Admin</div>
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-3 grid grid-cols-2 gap-2">
+              <button className="btn" disabled={loading} onClick={() => admin.freeze()}>
+                Freeze
+              </button>
+              <button className="btn" disabled={loading} onClick={() => admin.unfreeze()}>
+                Unfreeze
+              </button>
+              <button className="btn" disabled={loading} onClick={() => admin.rollback()}>
+                Rollback
+              </button>
+              <button className="btn" disabled={loading} onClick={() => admin.clearCandidate()}>
+                Clear candidate
+              </button>
+              <div className="col-span-2 text-[11px] text-neutral-400 mt-1">
+                Admin calls include your X-API-Key header if provided.
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div className="text-xs text-neutral-400 mb-2">Recent</div>
+            <div className="rounded-xl border border-neutral-800 bg-neutral-950 p-2">
+              {recent.length === 0 ? (
+                <div className="p-2 text-sm text-neutral-400">No requests yet.</div>
+              ) : (
+                <ul className="divide-y divide-neutral-800">
+                  {recent.map((r, i) => (
+                    <li key={i} className="flex items-center justify-between gap-3 py-2">
+                      <div className="text-sm truncate pr-2">{r}</div>
+                      <div className="flex items-center gap-2">
+                        <button className="btn btn--sm" onClick={() => applyRecent(r)}>
+                          Load
+                        </button>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() => setRecent(recent.filter((x) => x !== r))}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {recent.length > 0 && (
+                <div className="mt-2 flex">
+                  <button className="btn btn--sm ml-auto" onClick={() => setRecent([])}>
+                    Clear recent
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
+      </section>
 
-        {/* Admin controls */}
-        <div className="rounded-xl border border-neutral-800 p-3">
-          <div className="mb-2 text-xs font-semibold text-neutral-300">Admin</div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            <button
-              disabled={busy}
-              onClick={() => adminHit(`/admin/freeze`)}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
-              title="Freeze auto-tuning (stop promotions/rollbacks)"
-            >
-              Freeze
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => adminHit(`/admin/unfreeze`)}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
-            >
-              Unfreeze
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => adminHit(`/admin/rollback`)}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
-            >
-              Rollback
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => adminHit(`/admin/clear-candidate`, "DELETE")}
-              className="rounded-md bg-neutral-800 px-3 py-2 text-sm hover:bg-neutral-700 disabled:opacity-50"
-            >
-              Clear candidate
-            </button>
-          </div>
-          <p className="mt-2 text-xs text-neutral-400">
-            Admin calls include your <code>X-API-Key</code> header if provided.
-          </p>
-        </div>
-      </div>
-
-      {/* RIGHT: server responses */}
-      <div className="rounded-xl border border-neutral-800 p-3">
-        <pre className="h-[520px] overflow-auto text-[12px] leading-5">
-          {server || "// server responses will appear here"}
-        </pre>
-      </div>
+      {/* tiny style helpers (scoped by Tailwind classes you already have) */}
+      <style>{`
+        .btn {
+          @apply rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-50;
+        }
+        .btn--primary {
+          @apply border-titan-500 bg-titan-700/20 hover:bg-titan-700/30;
+        }
+        .btn--sm {
+          @apply px-2 py-1 text-xs;
+        }
+        .chip {
+          @apply rounded-full border border-neutral-700 px-3 py-1 text-sm hover:bg-neutral-900;
+        }
+        .chip--active {
+          @apply border-titan-500 bg-titan-900/40;
+        }
+      `}</style>
     </div>
   );
 }
